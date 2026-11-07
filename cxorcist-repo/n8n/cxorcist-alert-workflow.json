@@ -1,0 +1,107 @@
+{
+  "name": "Cxorcist Alert",
+  "nodes": [
+    {
+      "parameters": { "httpMethod": "POST", "path": "cxorcist-alert", "responseMode": "responseNode", "options": {} },
+      "name": "Cxorcist Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 200],
+      "webhookId": "cxorcist-alert"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            { "value1": "={{ $json.body.critical_count }}", "operation": "larger", "value2": 0 }
+          ]
+        }
+      },
+      "name": "Any critical findings?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [240, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const b = $input.first().json.body;\nconst esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\nconst top = (b.top_findings || []).slice(0, 3).map(f => `${f.severity} issue in ${f.location}. ${f.action || ''}`).join(' ');\nconst spoken = `Cxorcist alert. ${b.message} ${top}`;\nconst twiml = `<Response><Say voice=\"alice\">${esc(spoken)}</Say></Response>`;\nconst lines = (b.top_findings || []).map(f => `- [${f.severity.toUpperCase()}] ${f.location}: ${f.title}\\n  Next step: ${f.action || 'review'} (${f.tier})`).join('\\n');\nconst text = `${b.message}\\n\\nScanned: ${b.scanned_at}\\nTotal findings: ${b.total_findings}\\n\\nTop findings:\\n${lines}`;\nreturn [{ json: { twiml, subject: `Cxorcist: ${b.critical_count} critical, ${b.high_count} high`, text } }];"
+      },
+      "name": "Build call + email text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [480, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.twilio.com/2010-04-01/Accounts/YOUR_TWILIO_ACCOUNT_SID/Calls.json",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "contentType": "form-urlencoded",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "To", "value": "+10000000000" },
+            { "name": "From", "value": "+10000000001" },
+            { "name": "Twiml", "value": "={{ $json.twiml }}" }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Twilio voice call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 100],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "fromEmail": "alerts@yourdomain.com",
+        "toEmail": "you@yourdomain.com",
+        "subject": "={{ $('Build call + email text').item.json.subject }}",
+        "emailFormat": "text",
+        "text": "={{ $('Build call + email text').item.json.text }}",
+        "options": {}
+      },
+      "name": "Send alert email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [960, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"alerted\", \"channels\": [\"voice\", \"email\"] } }}",
+        "options": {}
+      },
+      "name": "Respond: alerted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1200, 100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"no_alert\", \"reason\": \"no critical findings\" } }}",
+        "options": {}
+      },
+      "name": "Respond: no alert",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [480, 320]
+    }
+  ],
+  "connections": {
+    "Cxorcist Webhook": { "main": [[{ "node": "Any critical findings?", "type": "main", "index": 0 }]] },
+    "Any critical findings?": {
+      "main": [
+        [{ "node": "Build call + email text", "type": "main", "index": 0 }],
+        [{ "node": "Respond: no alert", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build call + email text": { "main": [[{ "node": "Twilio voice call", "type": "main", "index": 0 }]] },
+    "Twilio voice call": { "main": [[{ "node": "Send alert email", "type": "main", "index": 0 }]] },
+    "Send alert email": { "main": [[{ "node": "Respond: alerted", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1" }
+}

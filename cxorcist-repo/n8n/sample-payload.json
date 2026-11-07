@@ -1,0 +1,46 @@
+{
+  "source": "cxorcist",
+  "root": "/path/to/sample_repo",
+  "scanned_at": "2026-11-07T07:27:19Z",
+  "critical_count": 1,
+  "high_count": 7,
+  "total_findings": 18,
+  "message": "Cxorcist scan found 1 critical and 7 high severity issues in sample_repo.",
+  "top_findings": [
+    {
+      "title": "1 known advisory in pyyaml@5.3: yaml rce",
+      "severity": "critical",
+      "location": "pyyaml",
+      "tier": "auto_fixable",
+      "action": "pip install 'pyyaml>=5.3.1'"
+    },
+    {
+      "title": "Hard-coded credential",
+      "severity": "high",
+      "location": "app.py:7",
+      "tier": "escalate",
+      "action": "Exposed secret: rotate it and remove from history."
+    },
+    {
+      "title": "subprocess with shell=True risks command injection",
+      "severity": "high",
+      "location": "app.py:11",
+      "tier": "review",
+      "action": "Code issues need a human review."
+    },
+    {
+      "title": "Use of eval() allows arbitrary code execution",
+      "severity": "high",
+      "location": "app.py:13",
+      "tier": "review",
+      "action": "Code issues need a human review."
+    },
+    {
+      "title": "pickle can execute code when loading untrusted data",
+      "severity": "high",
+      "location": "app.py:18",
+      "tier": "review",
+      "action": "Code issues need a human review."
+    }
+  ]
+}
