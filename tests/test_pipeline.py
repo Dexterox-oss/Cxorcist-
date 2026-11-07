@@ -81,3 +81,82 @@ def test_alert_payload():
     r = pipeline.run(FIXTURE, http=fake_http)
     p = alerts.build_payload(r)
     assert p["source"] == "cxorcist" and p["critical_count"] >= 1 and p["top_findings"]
+
+
+# ---- cache correctness, error containment, unchecked deps, ignore rules ----
+from cxorcist.llm import LLMError
+
+
+class AlwaysBad:
+    model = "a"
+
+    def chat_json(self, system, user):
+        return {"junk": True}
+
+
+class FatalClient:
+    model = "a"
+    calls = 0
+
+    def chat_json(self, system, user):
+        FatalClient.calls += 1
+        raise LLMError("Groq rejected the API key (HTTP 401).", fatal=True)
+
+
+class ModelClient(FakeLLM):
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+
+def test_failed_answers_are_not_cached(tmp_path):
+    cache = tmp_path / "c.json"
+    r1 = pipeline.run(FIXTURE, http=fake_http, llm=AlwaysBad(), max_llm=5, cache_path=str(cache))
+    assert r1["summary"]["llm_failed"] == 5
+    assert all(v for v in json.loads(cache.read_text()).values())          # no null entries stored
+    good = FakeLLM()
+    pipeline.run(FIXTURE, http=fake_http, llm=good, max_llm=5, cache_path=str(cache))
+    assert good.calls == 5                                                 # failures were retried, not stuck
+
+
+def test_cache_is_per_model(tmp_path):
+    cache = str(tmp_path / "c.json")
+    pipeline.run(FIXTURE, http=fake_http, llm=ModelClient("a"), max_llm=5, cache_path=cache)
+    other = ModelClient("b")
+    pipeline.run(FIXTURE, http=fake_http, llm=other, max_llm=5, cache_path=cache)
+    assert other.calls == 5
+
+
+def test_corrupt_cache_file_is_ignored(tmp_path):
+    cache = tmp_path / "c.json"
+    cache.write_text("{not json")
+    r = pipeline.run(FIXTURE, http=fake_http, llm=FakeLLM(), max_llm=3, cache_path=str(cache))
+    assert r["summary"]["llm_calls"] == 3
+
+
+def test_fatal_llm_error_still_produces_a_report(tmp_path):
+    FatalClient.calls = 0
+    r = pipeline.run(FIXTURE, http=fake_http, llm=FatalClient(), max_llm=10, cache_path=str(tmp_path / "c.json"))
+    assert FatalClient.calls == 1                       # stopped after the first fatal error
+    assert any(e.get("stage") == "llm" and "API key" in e["error"] for e in r["errors"])
+    assert r["summary"]["findings_total"] > 5           # findings are still reported
+
+
+def test_unpinned_dependencies_are_reported_not_hidden():
+    r = pipeline.run(FIXTURE, http=fake_http)
+    names = {d["name"] for d in r["unchecked_dependencies"]}
+    assert {"flask", "express"} <= names
+    assert r["summary"]["unpinned_dependencies"] == len(r["unchecked_dependencies"])
+
+
+def test_ignore_patterns_and_ignore_file(tmp_path):
+    r = pipeline.run(FIXTURE, http=fake_http, ignore_patterns=["app.py", "*.js"])
+    files = {f["file"] for f in r["findings"] if f["kind"] == "code_issue"}
+    assert "app.py" not in files and "script.js" not in files and "broken.py" in files
+
+    (tmp_path / "danger.py").write_text("eval('1')\n")
+    (tmp_path / "keep.py").write_text("eval('2')\n")
+    (tmp_path / ".cxorcistignore").write_text("# comment\ndanger.py\n")
+    r2 = pipeline.run(str(tmp_path), http=fake_http)
+    assert {f["file"] for f in r2["findings"]} == {"keep.py"}
+    assert r2["ignored_patterns"] == ["danger.py"]

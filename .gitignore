@@ -1,0 +1,6 @@
+.cxorcist_cache.json
+__pycache__/
+*.pyc
+.env
+report.json
+.pytest_cache/

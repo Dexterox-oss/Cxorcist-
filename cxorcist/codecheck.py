@@ -165,13 +165,15 @@ def _is_env_file(p: Path) -> bool:
     return p.name == ".env" or (p.name.startswith(".env.") and not p.name.endswith((".example", ".sample")))
 
 
-def check_repo(root_path: str) -> tuple[list[Finding], list[dict]]:
+def check_repo(root_path: str, ignore=None) -> tuple[list[Finding], list[dict]]:
     root = Path(root_path).resolve()
     findings: list[Finding] = []
     errors: list[dict] = []
     for p in root.rglob("*"):
         rel_parts = p.relative_to(root).parts
         if not p.is_file() or any(part in SKIP_DIRS for part in rel_parts):
+            continue
+        if ignore and ignore(p.relative_to(root)):
             continue
         suffix = p.suffix.lower()
         env_file = _is_env_file(p)

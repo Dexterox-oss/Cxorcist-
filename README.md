@@ -52,9 +52,21 @@ curl -X POST https://YOUR-N8N/webhook-test/cxorcist-alert -H "Content-Type: appl
 
 To have the CLI send it for you: `--alert-url https://YOUR-N8N/webhook/cxorcist-alert` (or set `N8N_WEBHOOK_URL`).
 
+## Ignore rules
+
+Put a `.cxorcistignore` file in the scanned folder (one pattern per line, `#` for comments), or pass `--ignore PATTERN`
+(repeatable). A pattern matches a folder or file name anywhere (`tests`, `*.min.js`), or a path prefix (`fixtures/sample_repo`).
+
+## Groq model
+
+Groq retires models regularly (`llama-3.3-70b-versatile` shut down on 2026-08-16). The default is `openai/gpt-oss-120b`;
+override with `export GROQ_MODEL=<id>`. A bad key or retired model prints one clear message, the scan still finishes,
+and only successful LLM answers are cached (the cache is keyed by model).
+
 ## Limits (honest)
 
 - `codecheck.py` is heuristic pattern checking, not a full SAST tool; expect some false positives (the LLM rates likelihood).
-- Dependencies declared only as ranges (no lockfile) are reported as unpinned and cannot be matched to advisories.
+- Dependencies declared only as ranges (no lockfile) cannot be matched to advisories. They are listed in
+  `unchecked_dependencies` and a warning is printed, but they are **not** vulnerability-checked. Commit a lockfile.
 - Version comparison is numeric major.minor.patch; pre-release tags are not modelled.
 - `sample_repo` under `fixtures/` is intentionally insecure test data.

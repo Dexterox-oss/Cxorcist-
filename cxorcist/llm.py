@@ -6,13 +6,17 @@ from __future__ import annotations
 
 import json
 import os
+import time
+import urllib.error
 from typing import Callable, Protocol
 
 from .models import SEVERITY_ORDER, Finding
 from .net import http_json
 
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+# Groq retires models regularly (llama-3.3-70b-versatile shut down on 2026-08-16).
+# Override without code changes:  export GROQ_MODEL=<id>
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 
 SYSTEM_PROMPT = (
     "You are a security triage assistant. You receive ONE finding (a vulnerable dependency or a "
@@ -24,24 +28,56 @@ SYSTEM_PROMPT = (
 )
 
 
+class LLMError(Exception):
+    """fatal=True means retrying other findings is pointless (bad key, wrong model, bad request)."""
+
+    def __init__(self, message: str, fatal: bool = False):
+        super().__init__(message)
+        self.fatal = fatal
+
+
 class LLMClient(Protocol):
     def chat_json(self, system: str, user: str) -> dict: ...
 
 
 class GroqClient:
     def __init__(self, api_key: str | None = None, model: str | None = None,
-                 http: Callable[..., dict] = http_json, url: str = GROQ_URL):
+                 http: Callable[..., dict] = http_json, url: str = GROQ_URL,
+                 sleep: Callable[[float], None] = time.sleep, attempts: int = 3):
         self.api_key = api_key or os.environ.get("GROQ_API_KEY", "")
         if not self.api_key:
             raise ValueError("GROQ_API_KEY is not set")
         self.model = model or os.environ.get("GROQ_MODEL", DEFAULT_MODEL)
-        self.http, self.url = http, url
+        self.http, self.url, self.sleep, self.attempts = http, url, sleep, attempts
 
     def chat_json(self, system: str, user: str) -> dict:
         body = {"model": self.model, "temperature": 0, "response_format": {"type": "json_object"},
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
-        resp = self.http(self.url, body, {"Authorization": f"Bearer {self.api_key}"})
-        return json.loads(resp["choices"][0]["message"]["content"])
+        last: LLMError | None = None
+        for attempt in range(self.attempts):
+            try:
+                resp = self.http(self.url, body, {"Authorization": f"Bearer {self.api_key}"})
+                return json.loads(resp["choices"][0]["message"]["content"])
+            except urllib.error.HTTPError as e:
+                code = e.code
+                if code in (401, 403):
+                    raise LLMError(f"Groq rejected the API key (HTTP {code}). Check GROQ_API_KEY.", fatal=True) from None
+                if code == 404:
+                    raise LLMError(f"Groq model '{self.model}' not found (HTTP 404). It may have been retired; "
+                                   "set GROQ_MODEL to a current model id.", fatal=True) from None
+                if code == 429 or code >= 500:
+                    last = LLMError(f"Groq temporary error (HTTP {code})")
+                else:
+                    try:
+                        detail = e.read()[:200].decode("utf-8", "ignore")
+                    except Exception:
+                        detail = ""
+                    raise LLMError(f"Groq request failed (HTTP {code}) {detail}".strip(), fatal=True) from None
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                last = LLMError(f"Could not reach Groq: {e}")
+            if attempt < self.attempts - 1:
+                self.sleep(2 ** attempt)
+        raise last or LLMError("Groq request failed")
 
 
 def validate_triage(obj: dict) -> dict:
@@ -74,7 +110,8 @@ def finding_payload(f: Finding) -> str:
 
 
 def triage(client: LLMClient, f: Finding, retries: int = 2) -> dict | None:
-    """Ask the model; retry on malformed output; return None if it never validates."""
+    """Ask the model; retry on malformed output; return None if it never validates.
+    LLMError (network/auth/model problems) propagates to the caller."""
     user = finding_payload(f)
     for _ in range(retries + 1):
         try:

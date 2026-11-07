@@ -249,11 +249,13 @@ def _parser_for(p: Path):
     return None
 
 
-def scan(root_path: str) -> dict:
+def scan(root_path: str, ignore=None) -> dict:
     root = Path(root_path).resolve()
     found, errors, files = [], [], []
     for p in root.rglob("*"):
         if not p.is_file() or any(part in SKIP_DIRS for part in p.relative_to(root).parts):
+            continue
+        if ignore and ignore(p.relative_to(root)):
             continue
         parser = _parser_for(p)
         if not parser:

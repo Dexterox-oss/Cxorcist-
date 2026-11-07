@@ -1,0 +1,3 @@
+# Cxorcist ignores its own deliberately insecure test data and tests when scanning this repo
+fixtures/
+tests/
