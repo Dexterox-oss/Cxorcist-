@@ -11,11 +11,30 @@ repo folder
   -> scanner.py    reads dependency files (Python, JS, Go, Rust, Ruby, PHP, Java/Kotlin, .NET), exact versions from lockfiles
   -> osv.py        looks up known vulnerabilities on OSV.dev (free, no key) and picks a version that fixes all of them
   -> codecheck.py  static checks: eval/exec, shell=True, pickle, unsafe yaml, TLS off, weak hashes, bare except,
-                   mutable defaults, debug mode, syntax errors, invalid JSON/TOML, hard-coded secrets (values redacted)
+                   mUtable defaults, debug mode, syntax errors, invalid JSON/TOML, hard-coded secrets (values redacted)
   -> llm.py        Groq explains each finding and suggests a next step (strict JSON validation, retries, cache)
   -> risk.py       deterministic rule table: auto_fixable vs escalate
   -> alerts.py     summary payload -> n8n webhook (workflow in n8n/)
 ```
+## Sample output
+
+Run against the intentionally insecure `fixtures/sample_repo`, with live OSV.dev data and Groq triage:
+
+```
+$ python -m cxorcist scan fixtures/sample_repo --llm --max-llm 10
+Scanned 5 dependencies {'PyPI': 3, 'npm': 2} in 20.21s
+Findings: 18  {'critical': 1, 'high': 8, 'medium': 6, 'low': 3}  (vulns: 3, code issues: 15, auto-fixable: 1, needs human: 17)
+WARNING: 2 dependencies have no exact version and were NOT checked for vulnerabilities (add a lockfile): flask, express
+LLM calls: 10, cache hits: 0
+  [CRITICAL] pyyaml@5.3  4 known advisories ... -> fix 5.4  (auto_fixable)
+  [HIGH    ] requests@2.19.0  10 known advisories ... -> fix 2.33.0  (escalate)
+  [HIGH    ] app.py:13  Use of eval() allows arbitrary code execution  (review)
+  [HIGH    ] app.py:7  Hard-coded credential  (escalate)
+  ...
+```
+
+A second run makes `LLM calls: 0, cache hits: 10`: unchanged findings are never sent to the LLM again.
+Only `pyyaml` is `auto_fixable` (critical severity, small upgrade). Everything else goes to a human by design.
 
 ## Design decisions
 
